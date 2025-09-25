@@ -71,6 +71,30 @@ echo "📦 Creating database and user in PostgreSQL..."
 echo "$SQL" | sudo -u postgres psql
 echo "✅ Database '$DBNAME' and user '$DBUSER' created successfully."
 
+# === Create project folder and virtual environment if missing ===
+echo "📂 Creating project directory and virtual environment..."
+sudo mkdir -p "$PROJECT_DIR"
+sudo chown -R "$USER":"$USER" "$PROJECT_DIR"
+
+# Create venv if it doesn't exist
+if [[ ! -d "$PROJECT_DIR/venv" ]]; then
+    python3 -m venv "$PROJECT_DIR/venv"
+fi
+
+# Activate venv and install Django + Gunicorn
+source "$PROJECT_DIR/venv/bin/activate"
+pip install --upgrade pip
+pip install django gunicorn psycopg2-binary
+deactivate
+
+# Optionally: create Django project if missing
+if [[ ! -d "$PROJECT_DIR/$PROJECT_NAME" ]]; then
+    source "$PROJECT_DIR/venv/bin/activate"
+    django-admin startproject "$PROJECT_NAME" "$PROJECT_DIR"
+    deactivate
+fi
+
+
 # === Gunicorn systemd service ===
 SERVICE_FILE="/etc/systemd/system/$PROJECT_NAME.service"
 echo "⚙️  Creating Gunicorn systemd service..."
