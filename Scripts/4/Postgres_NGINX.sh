@@ -20,7 +20,7 @@ ask_if_empty() {
   fi
 }
 
-# === Load from YAML ===
+# === Load from YAML or ask ===
 DBNAME=$(yaml_read dbname)
 DBUSER=$(yaml_read dbuser)
 DBPASS=$(yaml_read dbpass)
@@ -33,7 +33,6 @@ PROJECT_DIR=$(yaml_read project_dir)
 SYSTEM_USER=$(yaml_read system_user)
 PYTHON_BIN=$(yaml_read python_bin)
 
-# === Ask interactively if missing ===
 ask_if_empty DBNAME "Enter database name" "mydb"
 ask_if_empty DBUSER "Enter database username" "myuser"
 ask_if_empty DBPASS "Enter password for $DBUSER" "changeme"
@@ -46,7 +45,7 @@ ask_if_empty PROJECT_DIR "Enter Django project directory" "/var/www/$PROJECT_NAM
 ask_if_empty SYSTEM_USER "Enter system user for Gunicorn" "www-data"
 ask_if_empty PYTHON_BIN "Enter Python binary path" "python3"
 
-# === PostgreSQL ===
+# === PostgreSQL DB + User ===
 SQL=$(cat <<EOF
 CREATE DATABASE "$DBNAME";
 CREATE USER "$DBUSER" WITH PASSWORD '$DBPASS';
