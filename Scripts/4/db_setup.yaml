@@ -1,0 +1,6 @@
+dbname: myappdb
+dbuser: myappuser
+dbpass: SuperSecretPassword123
+encoding: utf8
+isolation: read committed
+timezone: UTC
