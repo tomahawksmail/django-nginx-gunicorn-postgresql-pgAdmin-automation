@@ -110,7 +110,7 @@ WorkingDirectory=$PROJECT_DIR
 ExecStart=$PROJECT_DIR/venv/bin/gunicorn \\
           --access-logfile - \\
           --workers 3 \\
-          --bind unix:/run/$PROJECT_NAME.sock \\
+          --bind unix:/var/www/$PROJECT_NAME/$PROJECT_NAME.sock \\
           $PROJECT_NAME.wsgi:application
 
 [Install]
@@ -135,7 +135,7 @@ server {
 
     location / {
         include proxy_params;
-        proxy_pass http://unix:/run/$PROJECT_NAME.sock;
+        proxy_pass http://unix:/var/www/hellogjango/hellogjango.sock;
     }
 }
 EOF
