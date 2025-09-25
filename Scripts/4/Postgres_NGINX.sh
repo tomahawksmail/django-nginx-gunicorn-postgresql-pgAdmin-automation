@@ -1,47 +1,37 @@
 #!/usr/bin/env bash
-# Automate PostgreSQL database + user creation and Nginx vhost for Django
+# Automate PostgreSQL DB + user creation, Django project, Gunicorn + Nginx
 # Uses YAML config or interactive prompts
 
 set -e
 CONFIG_FILE="db_setup.yaml"
 
-# === Function: read from YAML ===
-function yaml_read() {
+# === Functions ===
+yaml_read() {
   local key=$1
-  if [[ -f "$CONFIG_FILE" ]]; then
-    grep -E "^${key}:" "$CONFIG_FILE" | awk -F': ' '{print $2}' | tr -d '"'
-  fi
+  [[ -f "$CONFIG_FILE" ]] && grep -E "^${key}:" "$CONFIG_FILE" | awk -F': ' '{print $2}' | tr -d '"'
 }
 
-# === Function: ask if empty ===
-function ask_if_empty() {
-  local varname=$1
-  local prompt=$2
-  local default=$3
+ask_if_empty() {
+  local varname=$1 prompt=$2 default=$3
   local value="${!varname}"
-
   if [[ -z "$value" ]]; then
     read -rp "$prompt [${default}]: " input
-    if [[ -z "$input" ]]; then
-      eval "$varname='$default'"
-    else
-      eval "$varname='$input'"
-    fi
+    eval "$varname='${input:-$default}'"
   fi
 }
 
-# === Load from YAML or fallback ===
+# === Load from YAML ===
 DBNAME=$(yaml_read dbname)
 DBUSER=$(yaml_read dbuser)
 DBPASS=$(yaml_read dbpass)
 ENCODING=$(yaml_read encoding)
 ISOLATION=$(yaml_read isolation)
 TIMEZONE=$(yaml_read timezone)
-
 PROJECT_NAME=$(yaml_read project_name)
 DOMAIN=$(yaml_read domain)
 PROJECT_DIR=$(yaml_read project_dir)
 SYSTEM_USER=$(yaml_read system_user)
+PYTHON_BIN=$(yaml_read python_bin)
 
 # === Ask interactively if missing ===
 ask_if_empty DBNAME "Enter database name" "mydb"
@@ -50,13 +40,13 @@ ask_if_empty DBPASS "Enter password for $DBUSER" "changeme"
 ask_if_empty ENCODING "Enter client encoding" "utf8"
 ask_if_empty ISOLATION "Enter default transaction isolation" "read committed"
 ask_if_empty TIMEZONE "Enter default timezone" "UTC"
-
 ask_if_empty PROJECT_NAME "Enter Django project name" "hellogjango"
 ask_if_empty DOMAIN "Enter domain for Nginx vhost" "hellogjango.local"
 ask_if_empty PROJECT_DIR "Enter Django project directory" "/var/www/$PROJECT_NAME"
 ask_if_empty SYSTEM_USER "Enter system user for Gunicorn" "www-data"
+ask_if_empty PYTHON_BIN "Enter Python binary path" "python3"
 
-# === PostgreSQL: Create DB + User ===
+# === PostgreSQL ===
 SQL=$(cat <<EOF
 CREATE DATABASE "$DBNAME";
 CREATE USER "$DBUSER" WITH PASSWORD '$DBPASS';
@@ -66,34 +56,37 @@ ALTER ROLE "$DBUSER" SET timezone TO '$TIMEZONE';
 GRANT ALL PRIVILEGES ON DATABASE "$DBNAME" TO "$DBUSER";
 EOF
 )
-
-echo "📦 Creating database and user in PostgreSQL..."
+echo "📦 Creating PostgreSQL DB and user..."
 echo "$SQL" | sudo -u postgres psql
-echo "✅ Database '$DBNAME' and user '$DBUSER' created successfully."
+echo "✅ Database '$DBNAME' and user '$DBUSER' created."
 
-# === Create project folder and virtual environment if missing ===
-echo "📂 Creating project directory and virtual environment..."
+# === Project folder + venv ===
+echo "📂 Creating project folder and virtual environment..."
 sudo mkdir -p "$PROJECT_DIR"
 sudo chown -R "$USER":"$USER" "$PROJECT_DIR"
 
-# Create venv if it doesn't exist
 if [[ ! -d "$PROJECT_DIR/venv" ]]; then
-    python3 -m venv "$PROJECT_DIR/venv"
+    $PYTHON_BIN -m venv "$PROJECT_DIR/venv"
 fi
 
-# Activate venv and install Django + Gunicorn
 source "$PROJECT_DIR/venv/bin/activate"
 pip install --upgrade pip
 pip install django gunicorn psycopg2-binary
-deactivate
 
-# Optionally: create Django project if missing
+# Create Django project if missing
 if [[ ! -d "$PROJECT_DIR/$PROJECT_NAME" ]]; then
-    source "$PROJECT_DIR/venv/bin/activate"
     django-admin startproject "$PROJECT_NAME" "$PROJECT_DIR"
-    deactivate
 fi
 
+# Update settings.py to use PostgreSQL
+SETTINGS="$PROJECT_DIR/$PROJECT_NAME/settings.py"
+sed -i "s/'ENGINE': 'django.db.backends.sqlite3'/'ENGINE': 'django.db.backends.postgresql'/" "$SETTINGS"
+sed -i "s/'NAME': BASE_DIR \/ 'db.sqlite3'/'NAME': '$DBNAME'/" "$SETTINGS"
+sed -i "/'NAME':/a\        'USER': '$DBUSER',\n        'PASSWORD': '$DBPASS',\n        'HOST': 'localhost',\n        'PORT': '5432'," "$SETTINGS"
+
+python manage.py migrate
+python manage.py collectstatic --noinput
+deactivate
 
 # === Gunicorn systemd service ===
 SERVICE_FILE="/etc/systemd/system/$PROJECT_NAME.service"
@@ -110,7 +103,7 @@ WorkingDirectory=$PROJECT_DIR
 ExecStart=$PROJECT_DIR/venv/bin/gunicorn \\
           --access-logfile - \\
           --workers 3 \\
-          --bind unix:/var/www/$PROJECT_NAME/$PROJECT_NAME.sock \\
+          --bind unix:$PROJECT_DIR/$PROJECT_NAME.sock \\
           $PROJECT_NAME.wsgi:application
 
 [Install]
@@ -122,7 +115,7 @@ sudo systemctl enable --now "$PROJECT_NAME"
 
 # === Nginx vhost ===
 NGINX_FILE="/etc/nginx/sites-available/$PROJECT_NAME"
-echo "🌐 Creating Nginx virtual host..."
+echo "🌐 Creating Nginx vhost..."
 sudo tee "$NGINX_FILE" > /dev/null <<EOF
 server {
     listen 80;
@@ -135,7 +128,7 @@ server {
 
     location / {
         include proxy_params;
-        proxy_pass http://unix:/var/www/hellogjango/hellogjango.sock;
+        proxy_pass http://unix:$PROJECT_DIR/$PROJECT_NAME.sock;
     }
 }
 EOF
@@ -143,5 +136,4 @@ EOF
 sudo ln -sf "$NGINX_FILE" /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
 
-echo "✅ Nginx vhost for $DOMAIN created and reloaded."
-echo "🎉 Setup finished!"
+echo "🎉 Setup finished! Visit http://$DOMAIN"
